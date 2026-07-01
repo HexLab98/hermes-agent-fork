@@ -121,6 +121,46 @@ def test_clear_session_env_restores_previous_state(monkeypatch):
     assert get_session_env("HERMES_SESSION_THREAD_ID") == ""
 
 
+def test_set_session_env_stamps_session_profile(monkeypatch):
+    """Gateway dispatch should expose the delivery-owning profile."""
+    runner = object.__new__(GatewayRunner)
+    runner._kanban_notifier_profile = None
+    monkeypatch.setattr(runner, "_active_profile_name", lambda: "default")
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="-1001",
+        chat_type="group",
+    )
+    context = SessionContext(source=source, connected_platforms=[], home_channels={})
+
+    tokens = runner._set_session_env(context)
+    try:
+        assert get_session_env("HERMES_SESSION_PROFILE") == "default"
+    finally:
+        runner._clear_session_env(tokens)
+
+
+def test_set_session_env_prefers_source_profile(monkeypatch):
+    runner = object.__new__(GatewayRunner)
+    runner._kanban_notifier_profile = None
+    monkeypatch.setattr(runner, "_active_profile_name", lambda: "default")
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="-1001",
+        chat_type="group",
+        profile="orchestrator",
+    )
+    context = SessionContext(source=source, connected_platforms=[], home_channels={})
+
+    tokens = runner._set_session_env(context)
+    try:
+        assert get_session_env("HERMES_SESSION_PROFILE") == "orchestrator"
+    finally:
+        runner._clear_session_env(tokens)
+
+
 def test_get_session_env_falls_back_to_os_environ(monkeypatch):
     """get_session_env should fall back to os.environ when contextvar is unset."""
     monkeypatch.setenv("HERMES_SESSION_PLATFORM", "discord")
