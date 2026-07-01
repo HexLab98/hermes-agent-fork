@@ -1891,6 +1891,58 @@ def test_create_subscribes_gateway_session(monkeypatch, worker_env):
     assert s["user_id"] == "user-9"
 
 
+def test_create_auto_subscribe_uses_session_profile_not_worker_profile(
+    monkeypatch, worker_env,
+):
+    """Gateway messaging subs must match the chat-owning profile, not the
+    worker's HERMES_PROFILE (orchestrator workers on a default gateway)."""
+    from gateway.session_context import clear_session_vars, set_session_vars
+    from tools import kanban_tools as kt
+
+    tokens = set_session_vars(
+        platform="telegram",
+        chat_id="chat-42",
+        profile="default",
+    )
+    try:
+        monkeypatch.setenv("HERMES_PROFILE", "orchestrator")
+        out = kt._handle_create({
+            "title": "profile ownership",
+            "assignee": "peer",
+        })
+        d = json.loads(out)
+        assert d["ok"] is True
+        subs = _sub_index(_list_subs_for_task(d["task_id"]))
+        assert len(subs) == 1
+        assert subs[0]["notifier_profile"] == "default"
+    finally:
+        clear_session_vars(tokens)
+
+
+def test_create_auto_subscribe_gateway_omits_worker_profile_when_unset(
+    monkeypatch, worker_env,
+):
+    """Without a stamped session profile, don't tag the worker profile onto
+    a messaging sub — let the gateway notifier deliver instead."""
+    from gateway.session_context import clear_session_vars, set_session_vars
+    from tools import kanban_tools as kt
+
+    tokens = set_session_vars(platform="telegram", chat_id="chat-42", profile="")
+    try:
+        monkeypatch.setenv("HERMES_PROFILE", "orchestrator")
+        out = kt._handle_create({
+            "title": "no worker stamp",
+            "assignee": "peer",
+        })
+        d = json.loads(out)
+        assert d["ok"] is True
+        subs = _sub_index(_list_subs_for_task(d["task_id"]))
+        assert len(subs) == 1
+        assert subs[0].get("notifier_profile") in (None, "")
+    finally:
+        clear_session_vars(tokens)
+
+
 def test_create_subscribes_tui_session_via_session_key(monkeypatch, worker_env):
     """TUI / desktop sessions don't have a platform/chat_id (single
     local channel), but the parent process exports HERMES_SESSION_KEY.

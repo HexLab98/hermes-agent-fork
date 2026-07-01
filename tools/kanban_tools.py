@@ -870,6 +870,26 @@ def _handle_create(args: dict, **kw) -> str:
         return tool_error(f"kanban_create: {e}")
 
 
+def _resolve_notifier_profile(*, platform: str) -> Optional[str]:
+    """Pick which gateway profile should own delivery for a new notify sub.
+
+    Messaging sessions (telegram/discord/...) must match ``/kanban create``:
+    stamp the profile serving the user's chat, not the worker's
+    ``HERMES_PROFILE``. Kanban-dispatched orchestrator workers often run
+    under a different profile than the gateway that owns the Telegram bot.
+  TUI subscriptions keep worker ownership because the TUI poller keys on
+    session key rather than the gateway notifier profile gate.
+    """
+    from gateway.session_context import get_session_env
+
+    if platform == "tui":
+        return os.environ.get("HERMES_PROFILE")
+    if platform:
+        session_profile = get_session_env("HERMES_SESSION_PROFILE", "")
+        return session_profile or None
+    return os.environ.get("HERMES_PROFILE")
+
+
 def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
     """Auto-subscribe the calling session to task completion / block events.
 
@@ -947,7 +967,7 @@ def _maybe_auto_subscribe(conn: Any, task_id: str) -> bool:
             chat_id = session_key
         thread_id = get_session_env("HERMES_SESSION_THREAD_ID", "") or None
         user_id = get_session_env("HERMES_SESSION_USER_ID", "") or None
-        notifier_profile = os.environ.get("HERMES_PROFILE")
+        notifier_profile = _resolve_notifier_profile(platform=platform)
 
         # Lazy-import to keep the module-level dependency light
         from hermes_cli import kanban_db as _kb
