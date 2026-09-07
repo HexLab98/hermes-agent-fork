@@ -163,6 +163,58 @@ class TestCodingContextBlock:
         assert "coding agent" not in _stable_prompt(agent)
 
 
+class TestStableTierIsCwdIndependent:
+    """🔴 CACHE INVARIANT (#104610): two sessions that differ ONLY by working
+    directory must produce a byte-identical stable tier.
+
+    The stable tier is what ``_cached_system_prompt_static`` marks with the
+    explicit prompt-cache breakpoint, so a per-checkout line inside it forfeits
+    the entire cached block — not just the line — for every session opened in a
+    different worktree of the same project. ``build_environment_hints()`` writes
+    ``Current working directory:``, which is why it belongs to the context tier.
+    """
+
+    def _parts(self, cwd, monkeypatch):
+        monkeypatch.delenv("TERMINAL_ENV", raising=False)
+        monkeypatch.setenv("TERMINAL_CWD", str(cwd))
+        # Real build_environment_hints() — patching it out is exactly what hid this.
+        with (
+            patch("agent.prompt_builder.load_soul_md", return_value=""),
+            patch("agent.prompt_builder.build_context_files_prompt", return_value="CONTEXT_FILES"),
+        ):
+            return build_system_prompt_parts(_make_agent(platform="cli"))
+
+    def test_stable_tier_survives_a_worktree_change(self, monkeypatch, tmp_path):
+        first, second = tmp_path / "worktree-a", tmp_path / "worktree-b"
+        for path in (first, second):
+            path.mkdir()
+
+        parts_a = self._parts(first, monkeypatch)
+        parts_b = self._parts(second, monkeypatch)
+
+        assert parts_a["stable"] == parts_b["stable"]
+        assert str(first) not in parts_a["stable"]
+        assert f"Current working directory: {first}" in parts_a["context"]
+
+    def test_cwd_drift_is_still_detected_in_the_built_prompt(self, monkeypatch, tmp_path):
+        """The host block must stay whole and ahead of the context files: the
+        staleness check anchors the cwd on ``User home directory:`` and would go
+        blind (never rebuilding a prompt built in another directory) if the move
+        split the block or pushed it behind user project text."""
+        from agent.conversation_loop import _stored_prompt_matches_runtime
+
+        first, second = tmp_path / "worktree-a", tmp_path / "worktree-b"
+        for path in (first, second):
+            path.mkdir()
+        agent = _make_agent(platform="cli")
+        prompt = "\n\n".join(self._parts(first, monkeypatch).values())
+
+        monkeypatch.setenv("TERMINAL_CWD", str(first))
+        assert _stored_prompt_matches_runtime(agent, prompt) is True
+        monkeypatch.setenv("TERMINAL_CWD", str(second))
+        assert _stored_prompt_matches_runtime(agent, prompt) is False
+
+
 class TestExecutionGuidanceInjection:
     """Injection gate for OPENAI_MODEL_EXECUTION_GUIDANCE via
     ``agent.execution_guidance`` (auto/true/false/list).
