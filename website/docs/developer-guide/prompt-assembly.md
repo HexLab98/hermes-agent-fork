@@ -28,8 +28,8 @@ Primary files:
 
 The cached system prompt is assembled as three ordered tiers (see `agent/system_prompt.py`):
 
-1. **stable** — identity (`SOUL.md` or fallback), tool/model guidance, skills prompt, environment hints, platform hints
-2. **context** — caller-supplied `system_message` plus project context files (`.hermes.md` / `AGENTS.md` / `CLAUDE.md` / `.cursorrules`)
+1. **stable** — identity (`SOUL.md` or fallback), tool/model guidance, skills prompt, platform hints
+2. **context** — environment hints (host, home, working directory), workspace snapshot, caller-supplied `system_message` plus project context files (`.hermes.md` / `AGENTS.md` / `CLAUDE.md` / `.cursorrules`)
 3. **volatile** — built-in memory snapshot (`MEMORY.md`), user profile snapshot (`USER.md`), external memory-provider block, timestamp/session/model/provider line
 
 The final system prompt is then joined as: `stable` → `context` → `volatile`.

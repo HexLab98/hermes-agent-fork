@@ -2,10 +2,11 @@
 
 Built once per session and reused across turns (only context compression
 triggers a rebuild) so the upstream prefix cache stays warm.  Three tiers are
-joined with ``\\n\\n``: ``stable`` (identity, guidance, env hints, coding brief,
-platform hints), ``context`` (workspace snapshot, caller ``system_message``,
-context files) and ``volatile`` (skills index, memory, USER.md, external memory
-provider, timestamp line).  See ``references/system-prompt-invariant.md``.
+joined with ``\\n\\n``: ``stable`` (identity, guidance, coding brief, platform
+hints), ``context`` (env hints incl. the cwd, workspace snapshot, caller
+``system_message``, context files) and ``volatile`` (skills index, memory,
+USER.md, external memory provider, timestamp line).  See
+``references/system-prompt-invariant.md``.
 """
 
 from __future__ import annotations
@@ -604,9 +605,12 @@ def _join_tier(parts: List[Optional[str]]) -> str:
 def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) -> Dict[str, str]:
     """Assemble the system prompt as three ordered cache tiers: ``stable`` (through
     the coding operating brief when a workspace snapshot follows), ``context``
-    (snapshot, remaining session-stable guidance, caller ``system_message``,
-    context files) and ``volatile`` (skills index, memory, user profile, external
-    memory block, timestamp line).  Never re-rendered mid-session."""
+    (environment hints, snapshot, remaining session-stable guidance, caller
+    ``system_message``, context files) and ``volatile`` (skills index, memory, user
+    profile, external memory block, timestamp line).  Never re-rendered mid-session.
+
+    Nothing cwd-derived belongs in ``stable``: it is the tier the explicit prompt-cache
+    breakpoint is placed on, so one per-checkout line there costs the whole block."""
     # Model context window scales the context-file caps; stable per conversation.
     _cc_len = getattr(getattr(agent, "context_compressor", None), "context_length", None)
     _ctx_len = _cc_len if isinstance(_cc_len, int) and _cc_len > 0 else None
@@ -624,7 +628,6 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     if "skill_view" in (agent.valid_tool_names or set()) and "- hermes-agent:" in skills_prompt:
         stable_parts[_help_guidance_slot] = HERMES_AGENT_HELP_GUIDANCE
     stable_parts.extend(_alibaba_identity_part(agent))
-    stable_parts.append(_pb.build_environment_hints())
     # Coding posture: operating brief stays in the stable prefix; the live
     # git/workspace snapshot sits behind its own cache boundary, and the blocks
     # below it must keep their historical post-snapshot position.
@@ -632,7 +635,13 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     stable_parts.extend(coding_prefix_parts)
     post_workspace_parts = _post_workspace_parts(agent)
     # ── Context tier (cwd-dependent, may change between sessions) ─
-    context_parts: List[str] = []
+    # The environment hints carry ``Current working directory``, so they lead this
+    # tier rather than the stable one: the stable tier owns the explicit cache
+    # breakpoint (``_cached_system_prompt_static``), and a per-checkout line inside
+    # it forfeits that whole block on every worktree/session cwd change.  Keeping
+    # the host block whole (and ahead of the context files) preserves the anchor
+    # ``_stored_prompt_matches_runtime`` reads the cwd from.
+    context_parts: List[str] = [_pb.build_environment_hints()]
     (context_parts if coding_workspace_parts else stable_parts).extend(
         [*coding_workspace_parts, *coding_trailing_parts, *post_workspace_parts]
     )
